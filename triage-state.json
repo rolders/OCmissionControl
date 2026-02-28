@@ -1,0 +1,25 @@
+{
+  "updatedAt": "2026-02-05T22:02:46.879Z",
+  "lastSeen": {
+    "js76qcxpr4mm21jq5a3yrxbm8180gqnm": {
+      "lastMessageId": "jh7dpem9ngt34dbx897y3ex2r580jbcd",
+      "lastMessageAt": 1770297494461,
+      "count": 7
+    },
+    "js71vtb5ha43g3f5e4gr6svrjx80gvq1": {
+      "lastMessageId": "jh76gvtahq8pymsss42g57epj180k26n",
+      "lastMessageAt": 1770297506844,
+      "count": 23
+    },
+    "js7fvjakf1yag94r1h1tg9gzm980k359": {
+      "lastMessageId": "jh70cte9pfgsk1gcg9n04vqs5s80kd9r",
+      "lastMessageAt": 1770328966879,
+      "count": 26
+    },
+    "js778ab9mcm72hgr1mjgx9cs6980k3ag": {
+      "lastMessageId": "jh70gq6evzy1wxdasw7msbr2c180kg4w",
+      "lastMessageAt": 1770328966879,
+      "count": 26
+    }
+  }
+}
