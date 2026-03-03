@@ -65,6 +65,9 @@ export const create = mutation({
 
     // Target completion date (YYYY-MM-DD)
     dueDate: v.optional(v.string()),
+
+    // ETA / target completion timestamp (ms since epoch)
+    etaAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -78,6 +81,7 @@ export const create = mutation({
       projectId: args.projectId,
       project: args.project,
       dueDate: args.dueDate,
+      etaAt: args.etaAt,
       createdAt: now,
       updatedAt: now,
     });
@@ -216,6 +220,23 @@ export const setDueDate = mutation({
       agentId: undefined,
       taskId: args.id,
       message: args.dueDate ? `Task due date set: ${args.dueDate}` : "Task due date cleared",
+      createdAt: now,
+    });
+  },
+});
+
+export const setEtaAt = mutation({
+  args: { id: v.id("tasks"), etaAt: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    await ctx.db.patch(args.id, { etaAt: args.etaAt, updatedAt: now });
+    await ctx.db.insert("activities", {
+      type: "task_eta_changed",
+      agentId: undefined,
+      taskId: args.id,
+      message: args.etaAt
+        ? `Task ETA set: ${new Date(args.etaAt).toISOString().slice(0, 10)}`
+        : "Task ETA cleared",
       createdAt: now,
     });
   },

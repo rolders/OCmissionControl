@@ -6,6 +6,7 @@ import { api } from "../convex/_generated/api";
 
 const PROJECT_FILTER_STORAGE_KEY = "missionControl_projectFilter";
 const DUE_FILTER_STORAGE_KEY = "missionControl_dueFilter";
+const ETA_FILTER_STORAGE_KEY = "missionControl_etaFilter";
 const SORT_MODE_STORAGE_KEY = "missionControl_sortMode";
 
 function escapeHtml(s: string) {
@@ -80,7 +81,8 @@ const STATUSES: Array<{ key: string; title: string }> = [
 ];
 
 type DueFilter = "all" | "has_due" | "overdue" | "due_7d";
-type SortMode = "updated_desc" | "due_asc" | "due_desc";
+type EtaFilter = "all" | "has_eta" | "eta_overdue" | "eta_7d";
+type SortMode = "updated_desc" | "due_asc" | "due_desc" | "eta_asc" | "eta_desc";
 
 function parseDueDateLocal(dueDate?: string | null): Date | null {
   if (!dueDate) return null;
@@ -101,6 +103,7 @@ function Column({
   projectIdFilter,
   projectNameById,
   dueFilter,
+  etaFilter,
   sortMode,
   onSelect,
 }: {
@@ -109,6 +112,7 @@ function Column({
   projectIdFilter: string | null;
   projectNameById: Record<string, string>;
   dueFilter: DueFilter;
+  etaFilter: EtaFilter;
   sortMode: SortMode;
   onSelect: (id: string) => void;
 }) {
@@ -129,8 +133,20 @@ function Column({
       const dd = parseDueDateLocal((t as any).dueDate);
       if (dueFilter === "has_due") return !!dd;
       if (dueFilter === "overdue") return !!dd && dd.getTime() < today.getTime();
-      if (dueFilter === "due_7d")
+      if (dueFilter === "due_7d") {
         return !!dd && dd.getTime() >= today.getTime() && dd.getTime() <= in7d.getTime();
+      }
+      return true;
+    });
+
+    xs = xs.filter((t) => {
+      if (etaFilter === "all") return true;
+      const etaAt = (t as any).etaAt as number | undefined;
+      if (etaFilter === "has_eta") return typeof etaAt === "number";
+      if (etaFilter === "eta_overdue") return typeof etaAt === "number" && etaAt < today.getTime();
+      if (etaFilter === "eta_7d") {
+        return typeof etaAt === "number" && etaAt >= today.getTime() && etaAt <= in7d.getTime();
+      }
       return true;
     });
 
@@ -148,12 +164,26 @@ function Column({
         if (ad !== bd) return bd - ad;
         return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
       });
+    } else if (sortMode === "eta_asc") {
+      xs.sort((a, b) => {
+        const ad = ((a as any).etaAt as number | undefined) ?? Number.POSITIVE_INFINITY;
+        const bd = ((b as any).etaAt as number | undefined) ?? Number.POSITIVE_INFINITY;
+        if (ad !== bd) return ad - bd;
+        return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+      });
+    } else if (sortMode === "eta_desc") {
+      xs.sort((a, b) => {
+        const ad = ((a as any).etaAt as number | undefined) ?? Number.NEGATIVE_INFINITY;
+        const bd = ((b as any).etaAt as number | undefined) ?? Number.NEGATIVE_INFINITY;
+        if (ad !== bd) return bd - ad;
+        return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+      });
     } else {
       // Default: keep backend ordering (updated desc).
     }
 
     return xs;
-  }, [tasks, dueFilter, sortMode]);
+  }, [tasks, dueFilter, etaFilter, sortMode]);
 
   return (
     <div className="col">
@@ -165,7 +195,15 @@ function Column({
         {derived.map((t) => {
           const dueDate = (t as any).dueDate as string | undefined;
           const dd = parseDueDateLocal(dueDate);
-          const overdue = dd ? dd.getTime() < startOfTodayLocal().getTime() && t.status !== "done" : false;
+          const overdue = dd
+            ? dd.getTime() < startOfTodayLocal().getTime() && t.status !== "done"
+            : false;
+
+          const etaAt = (t as any).etaAt as number | undefined;
+          const etaDate = typeof etaAt === "number" ? new Date(etaAt) : null;
+          const etaStr = etaDate ? etaDate.toISOString().slice(0, 10) : null;
+          const etaOverdue =
+            typeof etaAt === "number" && etaAt < startOfTodayLocal().getTime() && t.status !== "done";
 
           return (
             <button
@@ -180,6 +218,11 @@ function Column({
                 {dueDate ? (
                   <span className={`pill ${overdue ? "pillDanger" : "pillMuted"}`}>
                     Due {dueDate}{overdue ? " (overdue)" : ""}
+                  </span>
+                ) : null}
+                {etaStr ? (
+                  <span className={`pill ${etaOverdue ? "pillDanger" : "pillMuted"}`}>
+                    ETA {etaStr}{etaOverdue ? " (overdue)" : ""}
                   </span>
                 ) : null}
                 {t.projectId ? (
@@ -259,6 +302,7 @@ function MissionQueuePage() {
   const setAssignees = useMutation(api.tasks.setAssignees);
   const setProjectId = useMutation(api.tasks.setProjectId);
   const setDueDate = useMutation(api.tasks.setDueDate);
+  const setEtaAt = useMutation(api.tasks.setEtaAt);
   const deleteTask = useMutation(api.tasks.remove);
   const createMessage = useMutation(api.messages.create);
 
@@ -290,6 +334,15 @@ function MissionQueuePage() {
   useEffect(() => {
     localStorage.setItem(DUE_FILTER_STORAGE_KEY, dueFilter);
   }, [dueFilter]);
+
+  const [etaFilter, setEtaFilter] = useState<EtaFilter>(() => {
+    const stored = localStorage.getItem(ETA_FILTER_STORAGE_KEY);
+    return (stored as EtaFilter) || "all";
+  });
+
+  useEffect(() => {
+    localStorage.setItem(ETA_FILTER_STORAGE_KEY, etaFilter);
+  }, [etaFilter]);
 
   const [sortMode, setSortMode] = useState<SortMode>(() => {
     const stored = localStorage.getItem(SORT_MODE_STORAGE_KEY);
@@ -542,6 +595,18 @@ function MissionQueuePage() {
 
             <select
               className="input inputSmall"
+              value={etaFilter}
+              onChange={(e) => setEtaFilter(e.target.value as EtaFilter)}
+              title="ETA filter"
+            >
+              <option value="all">All ETAs</option>
+              <option value="has_eta">Has ETA</option>
+              <option value="eta_overdue">ETA overdue</option>
+              <option value="eta_7d">ETA in 7d</option>
+            </select>
+
+            <select
+              className="input inputSmall"
               value={sortMode}
               onChange={(e) => setSortMode(e.target.value as SortMode)}
               title="Sort"
@@ -549,6 +614,8 @@ function MissionQueuePage() {
               <option value="updated_desc">Sort: Updated</option>
               <option value="due_asc">Sort: Due soon</option>
               <option value="due_desc">Sort: Due late</option>
+              <option value="eta_asc">Sort: ETA soon</option>
+              <option value="eta_desc">Sort: ETA late</option>
             </select>
           </div>
         </div>
@@ -561,6 +628,7 @@ function MissionQueuePage() {
               projectIdFilter={activeProjectId}
               projectNameById={projectNameById}
               dueFilter={dueFilter}
+              etaFilter={etaFilter}
               sortMode={sortMode}
               onSelect={(id) => setSelectedTaskId(id)}
             />
@@ -650,6 +718,38 @@ function MissionQueuePage() {
                   onClick={async () => {
                     if (!selectedTaskId) return;
                     await setDueDate({ id: selectedTaskId as any, dueDate: undefined });
+                  }}
+                >
+                  Clear
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div>
+            <div className="sectionTitle">ETA</div>
+            <div className="moveRow">
+              <input
+                className="input inputSmall"
+                type="date"
+                value={
+                  typeof (selectedTask as any)?.etaAt === "number"
+                    ? new Date((selectedTask as any).etaAt).toISOString().slice(0, 10)
+                    : ""
+                }
+                onChange={async (e) => {
+                  if (!selectedTaskId) return;
+                  const val = e.target.value || undefined;
+                  const etaAt = val ? new Date(`${val}T00:00:00`).getTime() : undefined;
+                  await setEtaAt({ id: selectedTaskId as any, etaAt });
+                }}
+              />
+              {typeof (selectedTask as any)?.etaAt === "number" ? (
+                <button
+                  className="btn btnSmall btnGhost"
+                  onClick={async () => {
+                    if (!selectedTaskId) return;
+                    await setEtaAt({ id: selectedTaskId as any, etaAt: undefined });
                   }}
                 >
                   Clear
@@ -846,6 +946,7 @@ function ProjectDetailPage() {
   const setAssignees = useMutation(api.tasks.setAssignees);
   const setProjectId = useMutation(api.tasks.setProjectId);
   const setDueDate = useMutation(api.tasks.setDueDate);
+  const setEtaAt = useMutation(api.tasks.setEtaAt);
   const deleteTask = useMutation(api.tasks.remove);
   const createMessage = useMutation(api.messages.create);
 
@@ -1052,6 +1153,7 @@ function ProjectDetailPage() {
               projectIdFilter={projectId}
               projectNameById={projectNameById}
               dueFilter="all"
+              etaFilter="all"
               sortMode="updated_desc"
               onSelect={(tid) => setSelectedTaskId(tid)}
             />
@@ -1122,6 +1224,38 @@ function ProjectDetailPage() {
                   onClick={async () => {
                     if (!selectedTaskId) return;
                     await setDueDate({ id: selectedTaskId as any, dueDate: undefined });
+                  }}
+                >
+                  Clear
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div>
+            <div className="sectionTitle">ETA</div>
+            <div className="moveRow">
+              <input
+                className="input inputSmall"
+                type="date"
+                value={
+                  typeof (selectedTask as any)?.etaAt === "number"
+                    ? new Date((selectedTask as any).etaAt).toISOString().slice(0, 10)
+                    : ""
+                }
+                onChange={async (e) => {
+                  if (!selectedTaskId) return;
+                  const val = e.target.value || undefined;
+                  const etaAt = val ? new Date(`${val}T00:00:00`).getTime() : undefined;
+                  await setEtaAt({ id: selectedTaskId as any, etaAt });
+                }}
+              />
+              {typeof (selectedTask as any)?.etaAt === "number" ? (
+                <button
+                  className="btn btnSmall btnGhost"
+                  onClick={async () => {
+                    if (!selectedTaskId) return;
+                    await setEtaAt({ id: selectedTaskId as any, etaAt: undefined });
                   }}
                 >
                   Clear

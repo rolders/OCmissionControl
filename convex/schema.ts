@@ -39,6 +39,9 @@ export default defineSchema({
     // Target completion date (YYYY-MM-DD). Kept as a date-only string to avoid TZ ambiguity.
     dueDate: v.optional(v.string()),
 
+    // ETA / target completion timestamp (ms since epoch). Used for "overdue/soon" monitoring.
+    etaAt: v.optional(v.number()),
+
     // Project context. New code should use projectId.
     projectId: v.optional(v.id("projects")),
     // Legacy string label (kept for backward compatibility + migration).

@@ -32,6 +32,8 @@ export const check = query({
         title: t.title,
         status: t.status,
         updatedAt: t.updatedAt,
+        dueDate: (t as any).dueDate,
+        etaAt: (t as any).etaAt,
       }));
 
     const counts: Record<string, number> = {};
