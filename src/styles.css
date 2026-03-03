@@ -145,6 +145,12 @@ body {
 
 .pillMuted { color: var(--muted); }
 
+.pillDanger {
+  color: #b42318;
+  border-color: #f5c0b8;
+  background: #fff1f0;
+}
+
 .form { display: flex; flex-direction: column; gap: 8px; }
 
 .input {

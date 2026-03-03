@@ -5,6 +5,8 @@ import sanitizeHtml from "sanitize-html";
 import { api } from "../convex/_generated/api";
 
 const PROJECT_FILTER_STORAGE_KEY = "missionControl_projectFilter";
+const DUE_FILTER_STORAGE_KEY = "missionControl_dueFilter";
+const SORT_MODE_STORAGE_KEY = "missionControl_sortMode";
 
 function escapeHtml(s: string) {
   return s
@@ -77,17 +79,37 @@ const STATUSES: Array<{ key: string; title: string }> = [
   { key: "done", title: "Done" },
 ];
 
+type DueFilter = "all" | "has_due" | "overdue" | "due_7d";
+type SortMode = "updated_desc" | "due_asc" | "due_desc";
+
+function parseDueDateLocal(dueDate?: string | null): Date | null {
+  if (!dueDate) return null;
+  // Stored as YYYY-MM-DD. Interpret as local date.
+  const d = new Date(`${dueDate}T00:00:00`);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function startOfTodayLocal(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 function Column({
   status,
   title,
   projectIdFilter,
   projectNameById,
+  dueFilter,
+  sortMode,
   onSelect,
 }: {
   status: string;
   title: string;
   projectIdFilter: string | null;
   projectNameById: Record<string, string>;
+  dueFilter: DueFilter;
+  sortMode: SortMode;
   onSelect: (id: string) => void;
 }) {
   const tasks = useQuery(api.tasks.listByStatus, {
@@ -95,36 +117,85 @@ function Column({
     projectId: projectIdFilter ?? undefined,
   });
 
+  const derived = useMemo(() => {
+    const today = startOfTodayLocal();
+    const in7d = new Date(today);
+    in7d.setDate(in7d.getDate() + 7);
+
+    let xs = [...(tasks ?? [])];
+
+    xs = xs.filter((t) => {
+      if (dueFilter === "all") return true;
+      const dd = parseDueDateLocal((t as any).dueDate);
+      if (dueFilter === "has_due") return !!dd;
+      if (dueFilter === "overdue") return !!dd && dd.getTime() < today.getTime();
+      if (dueFilter === "due_7d")
+        return !!dd && dd.getTime() >= today.getTime() && dd.getTime() <= in7d.getTime();
+      return true;
+    });
+
+    if (sortMode === "due_asc") {
+      xs.sort((a, b) => {
+        const ad = parseDueDateLocal((a as any).dueDate)?.getTime() ?? Number.POSITIVE_INFINITY;
+        const bd = parseDueDateLocal((b as any).dueDate)?.getTime() ?? Number.POSITIVE_INFINITY;
+        if (ad !== bd) return ad - bd;
+        return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+      });
+    } else if (sortMode === "due_desc") {
+      xs.sort((a, b) => {
+        const ad = parseDueDateLocal((a as any).dueDate)?.getTime() ?? Number.NEGATIVE_INFINITY;
+        const bd = parseDueDateLocal((b as any).dueDate)?.getTime() ?? Number.NEGATIVE_INFINITY;
+        if (ad !== bd) return bd - ad;
+        return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+      });
+    } else {
+      // Default: keep backend ordering (updated desc).
+    }
+
+    return xs;
+  }, [tasks, dueFilter, sortMode]);
+
   return (
     <div className="col">
       <div className="colHeader">
         <div className="colTitle">{title}</div>
-        <div className="colCount">{tasks?.length ?? "–"}</div>
+        <div className="colCount">{derived?.length ?? "–"}</div>
       </div>
       <div className="colBody">
-        {(tasks ?? []).map((t) => (
-          <button
-            key={t._id}
-            className="card cardButton"
-            onClick={() => onSelect(t._id)}
-          >
-            <div className="cardTitle">{t.title}</div>
-            {t.description ? <div className="cardDesc">{t.description}</div> : null}
-            <div className="cardMeta">
-              <span className="pill">{t.status}</span>
-              {t.projectId ? (
-                <span className="pill pillMuted">
-                  {projectNameById[t.projectId] ?? "Project"}
-                </span>
-              ) : null}
-              {t.tags?.slice(0, 3).map((tag) => (
-                <span key={tag} className="pill pillMuted">
-                  {tag}
-                </span>
-              ))}
-            </div>
-          </button>
-        ))}
+        {derived.map((t) => {
+          const dueDate = (t as any).dueDate as string | undefined;
+          const dd = parseDueDateLocal(dueDate);
+          const overdue = dd ? dd.getTime() < startOfTodayLocal().getTime() && t.status !== "done" : false;
+
+          return (
+            <button
+              key={t._id}
+              className="card cardButton"
+              onClick={() => onSelect(t._id)}
+            >
+              <div className="cardTitle">{t.title}</div>
+              {t.description ? <div className="cardDesc">{t.description}</div> : null}
+              <div className="cardMeta">
+                <span className="pill">{t.status}</span>
+                {dueDate ? (
+                  <span className={`pill ${overdue ? "pillDanger" : "pillMuted"}`}>
+                    Due {dueDate}{overdue ? " (overdue)" : ""}
+                  </span>
+                ) : null}
+                {t.projectId ? (
+                  <span className="pill pillMuted">
+                    {projectNameById[t.projectId] ?? "Project"}
+                  </span>
+                ) : null}
+                {t.tags?.slice(0, 3).map((tag) => (
+                  <span key={tag} className="pill pillMuted">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -210,6 +281,24 @@ function MissionQueuePage() {
   useEffect(() => {
     localStorage.setItem(PROJECT_FILTER_STORAGE_KEY, JSON.stringify(activeProjectId));
   }, [activeProjectId]);
+
+  const [dueFilter, setDueFilter] = useState<DueFilter>(() => {
+    const stored = localStorage.getItem(DUE_FILTER_STORAGE_KEY);
+    return (stored as DueFilter) || "all";
+  });
+
+  useEffect(() => {
+    localStorage.setItem(DUE_FILTER_STORAGE_KEY, dueFilter);
+  }, [dueFilter]);
+
+  const [sortMode, setSortMode] = useState<SortMode>(() => {
+    const stored = localStorage.getItem(SORT_MODE_STORAGE_KEY);
+    return (stored as SortMode) || "updated_desc";
+  });
+
+  useEffect(() => {
+    localStorage.setItem(SORT_MODE_STORAGE_KEY, sortMode);
+  }, [sortMode]);
 
   // Toast notification
   const [toast, setToast] = useState<string | null>(null);
@@ -438,6 +527,29 @@ function MissionQueuePage() {
                 Clear
               </button>
             ) : null}
+
+            <select
+              className="input inputSmall"
+              value={dueFilter}
+              onChange={(e) => setDueFilter(e.target.value as DueFilter)}
+              title="Due-date filter"
+            >
+              <option value="all">All due dates</option>
+              <option value="has_due">Has due date</option>
+              <option value="overdue">Overdue</option>
+              <option value="due_7d">Due in 7d</option>
+            </select>
+
+            <select
+              className="input inputSmall"
+              value={sortMode}
+              onChange={(e) => setSortMode(e.target.value as SortMode)}
+              title="Sort"
+            >
+              <option value="updated_desc">Sort: Updated</option>
+              <option value="due_asc">Sort: Due soon</option>
+              <option value="due_desc">Sort: Due late</option>
+            </select>
           </div>
         </div>
         <div className="board">
@@ -448,6 +560,8 @@ function MissionQueuePage() {
               title={s.title}
               projectIdFilter={activeProjectId}
               projectNameById={projectNameById}
+              dueFilter={dueFilter}
+              sortMode={sortMode}
               onSelect={(id) => setSelectedTaskId(id)}
             />
           ))}
@@ -937,6 +1051,8 @@ function ProjectDetailPage() {
               title={s.title}
               projectIdFilter={projectId}
               projectNameById={projectNameById}
+              dueFilter="all"
+              sortMode="updated_desc"
               onSelect={(tid) => setSelectedTaskId(tid)}
             />
           ))}
